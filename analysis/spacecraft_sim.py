@@ -160,11 +160,12 @@ class Spacecraft:
 def pi_controller(x, target, Kp, Ki, integral_error, I_SC):
     rate_rad = x[10:13]
     rate_error = target - rate_rad
-    integral_limit = np.array([100.0, 100.0, 100.0])
-    integral_error += rate_error * 0.1
+    integral_limit = np.array([100.0, 50.0, 50.0])
+    integral_error += rate_error * 0.05
     integral_error = np.clip(integral_error, -integral_limit, integral_limit)
     # Cross coupling term
     cross_coupling = np.cross(rate_rad, I_SC @ rate_rad)
+
     u = (Kp * rate_error) + (Ki * integral_error) + cross_coupling
     return u, integral_error
 
@@ -175,7 +176,7 @@ class ThrusterController:
         self.max_torque = np.array([320.0, 220.0, 220.0])  # [X, Y, Z] in N.m
         
         # Deadband threshold (5% of max torque)
-        self.deadband_percentage = 0.05
+        self.deadband_percentage = np.array([0.005, 0.005, 0.005])  # Tighter X-axis deadband
         self.deadband = self.max_torque * self.deadband_percentage
         
     def apply_deadband(self, torque):
@@ -244,10 +245,11 @@ if __name__ == "__main__":
     spacecraft_obj = Spacecraft()
     #spacecraft_obj.dt_sim = 0.1
     # Set time vector
-    num_orbits = 1
+    #num_orbits = 1
     #tFinal = spacecraft_obj.get_time_window(num_orbits) / 4
-    spacecraft_obj.dt_sim = 0.05
-    tFinal = 3600.0 / 4
+    #spacecraft_obj.dt_sim = 0.05
+    #tFinal = 3600.0 / 4
+    tFinal = 100
     t = 0.0
     dt_control = 0.1
     dt_pwm = 0.1
@@ -262,13 +264,8 @@ if __name__ == "__main__":
     target = np.array([np.deg2rad(0.5), 0., 0.])  # Target angular rates
 
     #ts = 10
-    Kp = np.array([20000.0, 900.0, 900.0])
-    Ki = np.array([1000.0, 1000.0, 1000.0])
-
-    # Derivative gain - for rate damping
-    #Kd = np.diag([200.0, 800.0, 800.0])   
-    #Kp =spacecraft_obj.I_SC @ Kp
-    #Ki = spacecraft_obj.I_SC @ Ki
+    Kp = np.array([1500.0, 1800.0, 1800.0])
+    Ki = np.array([800.0, 800.0, 800.0])
     integral_error = np.zeros(3)
     # ICs
     state = spacecraft_obj.x_IC
@@ -315,8 +312,6 @@ if __name__ == "__main__":
         state= spacecraft_obj.rk4_step(t, state, u_torque)
 
         t = t + spacecraft_obj.dt_sim
-        #print(t)
-
     # Get Angular Rates [pos, vel, attitude quat, angular velocity]
     states = np.asarray(states)
     controls = np.asarray(controls)
@@ -353,7 +348,7 @@ if __name__ == "__main__":
     plt.legend(['X', 'Y', 'Z'])
     plt.grid(True)
     plt.xlabel('Time (hr)')
-    
+
     plt.figure(figsize=(10, 5))
     plt.subplot(1, 2, 1)
     plt.plot(r[:, 0], r[:, 1], label='Orbit path')
