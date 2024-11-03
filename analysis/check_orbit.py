@@ -63,5 +63,35 @@ plt.legend(['X', 'Y', 'Z'])
 plt.grid(True)
 plt.xlabel('Time (hours)')
 
+
+# Set up 3D plot
+# Constants
+mu_moon = 4902.8001  # Gravitational parameter of the Moon [km^3/s^2]
+moon_radius = 1737.4  # Radius of the Moon [km]
+
+
+
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+ax.set_box_aspect([1, 1, 1])
+
+# Plot the Moon as a sphere
+u = np.linspace(0, 2 * np.pi, 100)
+v = np.linspace(0, np.pi, 100)
+x = moon_radius * np.outer(np.cos(u), np.sin(v))
+y = moon_radius * np.outer(np.sin(u), np.sin(v))
+z = moon_radius * np.outer(np.ones(np.size(u)), np.cos(v))
+ax.plot_surface(x, y, z, color='gray', alpha=0.5, rstride=5, cstride=5, edgecolor='k', linewidth=0.1)
+
+# Plot the spacecraft's orbit
+ax.plot(positions[:, 0], positions[:, 1], positions[:, 2], 'b', label='Spacecraft Orbit')
+
+# Labels and plot settings
+ax.set_xlabel('X [km]')
+ax.set_ylabel('Y [km]')
+ax.set_zlabel('Z [km]')
+ax.set_title('3D Orbit around the Moon')
+ax.legend()
+
 plt.tight_layout()
 plt.show()
