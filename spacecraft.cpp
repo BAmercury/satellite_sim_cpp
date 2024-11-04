@@ -1,7 +1,7 @@
 #include "spacecraft.hpp"
 
-# include <Eigen/Dense>
-# include <tuple>
+#include <Eigen/Dense>
+#include <tuple>
 #include <cmath>
 
 
@@ -41,8 +41,12 @@ spacecraft::spacecraft() {
     // Initial Angular Rates [rad/s]
     w0 = Eigen::Vector3d(0.01, 0.01, 0.01);
 
-    // Assemble State Vector IC, Quaternion scalar part goes last 
-    x_IC << r0, v0, q0.x(), q0.y(), q0.z(), q0.w(), w0;
+    // Assemble State Vector IC, Quaternion scalar part goes last in the state
+    x_IC.resize(13);
+    x_IC << r0[0], r0[1], r0[2],
+            v0[0], v0[1], v0[2],
+            q0.x(), q0.y(), q0.z(), q0.w(),
+            w0[0], w0[1], w0[2];
     // Initial Body Torques if needed
     u_IC = Eigen::Vector3d(0.0, 0.0, 0.0);
     // Simulation Time Step
@@ -55,10 +59,10 @@ std::tuple<Eigen::Vector3d, Eigen::Vector3d> spacecraft::get_inertial_pos_vel_fr
     // Get Specific Angular Momentum
     double h = std::sqrt(l*moon_mu);
     // Position and Velocity Vector in Perifocal Frame
-    Eigen::Vector3d temp(std::cos(nu), std::sin(nu), 0.0);
+    Eigen::Vector3d temp = Eigen::Vector3d(std::cos(nu), std::sin(nu), 0.0);
     Eigen::Vector3d r_w= std::pow(h, 2) / moon_mu / (1.0 + ecc * std::cos(nu)) * temp;
-    Eigen::Vector3d temp(-std::sin(nu), ecc + std::cos(nu), 0.0);
-    Eigen::Vector3d v_w = moon_mu / h * temp;
+    Eigen::Vector3d temp2 = Eigen::Vector3d(-std::sin(nu), ecc + std::cos(nu), 0.0);
+    Eigen::Vector3d v_w = moon_mu / h * temp2;
     // DCM Perifocal Frame to MCI frame
     // Create individual rotations
     Eigen::AngleAxisd Z1(raan, Eigen::Vector3d::UnitZ()); // Z rotation
@@ -74,7 +78,7 @@ std::tuple<Eigen::Vector3d, Eigen::Vector3d> spacecraft::get_inertial_pos_vel_fr
     return std::make_tuple(r_I, v_I);
 }
 
-double spacecraft::get_time_window(double num_orbits){
+double spacecraft::get_time_window(double& num_orbits){
     // Function to hlep get a time window based on number of orbits
     double period = 2.0*M_PI * std::sqrt((std::pow(semi_a, 3)) / moon_mu);
     return period*num_orbits; // In Seconds
@@ -101,16 +105,16 @@ Eigen::Vector3d spacecraft::gravity_grad_torque(Eigen::Vector3d r_I, Eigen::Quat
 }
 
 
-Eigen::VectorXd spacecraft::spacecraft_dynamics(Eigen::Vector3d x, Eigen::Vector3d u){
+Eigen::VectorXd spacecraft::spacecraft_dynamics(Eigen::VectorXd x, Eigen::Vector3d u){
     // Spacecraft Rigid Body Equations of motion
     // Extract states  x = r0, v0, q0.as_quat(), w0
     Eigen::Vector3d r(x[0], x[1], x[2]);
-    Eigen::Vector3d v(x[4], x[5], x[6]);
+    Eigen::Vector3d v(x[3], x[4], x[5]);
     // Get quat, ensure it's normalized
     // q_i2b
-    Eigen::Quaterniond q(x[10], x[7], x[8], x[9]); // Eigen expects the scalar first 
+    Eigen::Quaterniond q(x[9], x[6], x[7], x[8]); // Eigen expects the scalar first 
     q.normalize();
-    Eigen::Vector3d w(x[11], x[12], x[13]);
+    Eigen::Vector3d w(x[10], x[11], x[12]);
     // Create skew symmetric matrix
     Eigen::Matrix3d w_skew;
     w_skew << 0.0, -w[2], w[1],
@@ -118,13 +122,13 @@ Eigen::VectorXd spacecraft::spacecraft_dynamics(Eigen::Vector3d x, Eigen::Vector
            -w[1], w[0], 0.0;
 
     // Quaternion Kinematics
-    Eigen::MatrixXd q_matrix;
+    Eigen::MatrixXd q_matrix(4,3);
     q_matrix << q.w(), -q.z(), q.y(),
                 q.z(), q.w(), -q.x(),
                -q.y(), q.x(), q.w(),
-               -q.x(), -q.y() -q.y();
+               -q.x(), -q.y(), -q.z();
 
-    // Q_dot
+    // Q_dot (With Scalar part last)
     Eigen::VectorXd q_dot = (0.5) * (q_matrix * w);
 
     // Gravity Gradient Torque
@@ -144,12 +148,16 @@ Eigen::VectorXd spacecraft::spacecraft_dynamics(Eigen::Vector3d x, Eigen::Vector
     Eigen::Vector3d v_dot = -moon_mu * r / (std::pow(r_I_mag, 3)); // Translational Acceleration in inertial frame
 
     // Concatenate
-    Eigen::VectorXd x_dot;
-    x_dot << r_dot, v_dot, q_dot, w_dot;
+    Eigen::VectorXd x_dot(13);
+    x_dot << r_dot[0], r_dot[1], r_dot[2],
+             v_dot[0], v_dot[1], v_dot[2],
+             q_dot[0], q_dot[1], q_dot[2], q_dot[3],
+             w_dot[0], w_dot[1], w_dot[2];
+    
     return x_dot;
 }
 
-Eigen::VectorXd spacecraft::rk4_step(Eigen::Vector3d x, Eigen::Vector3d u){
+Eigen::VectorXd spacecraft::rk4_step(Eigen::VectorXd x, Eigen::Vector3d u){
     // Runge-Kutta 4 Integration Step
     Eigen::VectorXd f1 = spacecraft_dynamics(x, u);
     Eigen::VectorXd f2 = spacecraft_dynamics(x + 0.5*dt_sim*f1, u);

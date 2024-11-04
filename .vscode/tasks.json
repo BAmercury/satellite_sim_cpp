@@ -7,12 +7,16 @@
             "args": [
                 "-fdiagnostics-color=always",
                 "-g",
-                "${file}",
+                "-I${workspaceFolder}", // Include project root directory
+                "${workspaceFolder}/main.cpp",
+                "${workspaceFolder}/spacecraft.cpp",
+                "${workspaceFolder}/thruster.cpp",
+                "${workspaceFolder}/controller.cpp",
                 "-o",
-                "${fileDirname}/${fileBasenameNoExtension}"
+                "${workspaceFolder}/spacecraft_sim",
             ],
             "options": {
-                "cwd": "${fileDirname}"
+                "cwd": "${workspaceFolder}"
             },
             "problemMatcher": [
                 "$gcc"

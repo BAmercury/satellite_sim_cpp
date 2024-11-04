@@ -58,9 +58,9 @@ public:
     // Get Gravity Gradient
     Eigen::Vector3d gravity_grad_torque(Eigen::Vector3d r_I, Eigen::Quaterniond q_i2b);    
     // x_dot = f(x, u) spacecraft dynamics
-    Eigen::VectorXd spacecraft_dynamics(Eigen::Vector3d x, Eigen::Vector3d u);
+    Eigen::VectorXd spacecraft_dynamics(Eigen::VectorXd x, Eigen::Vector3d u);
     // Runge-Kutta 4 Step
-    Eigen::VectorXd rk4_step(Eigen::Vector3d x, Eigen::Vector3d u);
+    Eigen::VectorXd rk4_step(Eigen::VectorXd x, Eigen::Vector3d u);
 
 };
 

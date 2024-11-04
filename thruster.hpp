@@ -27,6 +27,7 @@ public:
     Eigen::Vector3d apply_deadband(Eigen::Vector3d torque);
     std::tuple<Eigen::Vector3d, Eigen::Vector3d> compute_pulse_command(Eigen::Vector3d desired_torque);
     Command torque_to_command(Eigen::Vector3d u);
+    Eigen::Vector3d thruster_model(Command commands);
     
 
 };
