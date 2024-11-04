@@ -16,7 +16,9 @@ int main()
   controller controller_obj;
 
   // final sim time
-  double tFinal = 100.0;
+  double num_orbits = 1.0;
+  double tFinal = sc_obj.get_time_window(num_orbits);
+  //double tFinal = 100.0;
   double t = 0.0;
 
   // Time to run next control

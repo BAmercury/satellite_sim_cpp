@@ -54,6 +54,7 @@ spacecraft::spacecraft() {
 }
 
 std::tuple<Eigen::Vector3d, Eigen::Vector3d> spacecraft::get_inertial_pos_vel_from_orbit(){
+    // https://control.asu.edu/Classes/MAE462/462Lecture07.pdf
     // Calculate semi-latus rectum
     double l = semi_a * (1.0 - std::pow(ecc, 2.0));
     // Get Specific Angular Momentum
@@ -63,7 +64,7 @@ std::tuple<Eigen::Vector3d, Eigen::Vector3d> spacecraft::get_inertial_pos_vel_fr
     Eigen::Vector3d r_w= std::pow(h, 2) / moon_mu / (1.0 + ecc * std::cos(nu)) * temp;
     Eigen::Vector3d temp2 = Eigen::Vector3d(-std::sin(nu), ecc + std::cos(nu), 0.0);
     Eigen::Vector3d v_w = moon_mu / h * temp2;
-    // DCM Perifocal Frame to MCI frame
+    // DCM Perifocal Frame to ME inertial frame
     // Create individual rotations
     Eigen::AngleAxisd Z1(raan, Eigen::Vector3d::UnitZ()); // Z rotation
     Eigen::AngleAxisd X(inclination, Eigen::Vector3d::UnitX()); //X rotation
@@ -139,7 +140,7 @@ Eigen::VectorXd spacecraft::spacecraft_dynamics(Eigen::VectorXd x, Eigen::Vector
     Eigen::Vector3d w_dot = I_SC_inv * (-w_skew * (I_SC * w) + L);
 
     // Translatoinal Dynamics
-    // Graviity modeel From Wertz https://link.springer.com/book/10.1007/978-94-009-9907-7
+    // Graviity model From Wertz https://link.springer.com/book/10.1007/978-94-009-9907-7
     Eigen::Vector3d r_dot = v;
     // Model with Keplerian Motion (2-body)
     // Assume M_moon >> M_sc
