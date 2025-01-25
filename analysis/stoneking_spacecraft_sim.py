@@ -20,7 +20,7 @@ class Spacecraft:
         # Get inverse
         self.I_SC_inv = np.linalg.inv(self.I_SC)
 
-        # Set Initial Conditions State Vector: [pos, vel, attitude quat, angular velocity]
+        # Set Initial Conditions State Vector: [attitude quat, angular velocity, wheel ang vel, pos, vel]
 
         # Convert orbital elements into position and velocity vector (In MCI Frame) as IC
         self.q0 = R.from_quat([0, 0, 0, 1]) # Scalar last is assumed by default, MCI to Body Frame
@@ -32,10 +32,19 @@ class Spacecraft:
         #self.w0 =  np.array([0.1, 5.0, 0.0])*np.pi/180.0  # Initial angular rates [rad/s]
         self.w0 = np.array([5.0, 5.0, 5.0])*np.pi/180.0
 
+        # S/C position and velocity
+        self.pos0 = np.array([10, 0, 10])
+        self.vel0 = np.array([0, -0.01, 0])
+        # Reference Orbit, 700-km circular
+        self.mu = 3.98600e14; # m^3/sec^2
+        self.OrbRad = 6378.145e3+700.0e3;
+        self.muR3 = self.mu/(self.OrbRad**3)
+        self.OrbRate = np.sqrt(self.muR3)
+
         # Wheel class
         self.wheel_model = ReactionWheels()
 
-        self.x_IC = np.concatenate([self.q0.as_quat(), self.w0, self.wheel_model.x_IC]) # S/C Initial State Vector
+        self.x_IC = np.concatenate([self.q0.as_quat(), self.w0, self.wheel_model.x_IC, self.pos0, self.vel0]) # S/C Initial State Vector
         self.u_IC = np.array([0, 0, 0, 0, 0, 0, 0]) # Initial controls if needed [rw1 rw2 rw3 thx thy thz]
 
 
@@ -44,7 +53,7 @@ class Spacecraft:
 
 
     
-    def spacecraft_dynamics(self, x, u):
+    def spacecraft_dynamics(self, t, x, u):
         # Spacecraft Rigid Body Equations of Motion
         # Extract states x = r0, v0, q0.as_quat(), w0
         # Scipy automatically normalized quaterion
@@ -85,18 +94,41 @@ class Spacecraft:
         # Total Angular Acceleration (Body Frame)
         w_dot_b_n_Brf = self.I_SC_inv @ ( (-w_skew @ (H)) + L)
 
+        # Translational Dynamics
+        PosR = x[11:14]
+        VelR = x[14:17]
+
+        OrbPosN = self.OrbRad * np.array([np.cos(self.OrbRad*t), np.sin(self.OrbRad*t), 0]) # OrbPosN R
+        r = OrbPosN + PosR
+
+        fq = self.EnckeFQ(r, PosR)
+
+        acc = np.array([0.0, 0.0, 0.0]) # F/m
+
+        rdot = VelR
+        vdot = acc - self.muR3*(PosR+fq*r)
+        
+
+
+
         # Concatenate
         #q_dot = q_dot.flatten()
         #w_dot_b_n_Brf = w_dot_b_n_Brf.flatten()
-        x_dot = np.concatenate([q_dot, w_dot_b_n_Brf, wheel_x_dot]) # S/C Initial State Vector
+        x_dot = np.concatenate([q_dot, w_dot_b_n_Brf, wheel_x_dot, rdot, vdot]) # S/C Initial State Vector
         return x_dot
+    
+    def EnckeFQ(self, r, PosR):
+        delta = PosR
+        q = np.dot(delta, (delta - 2.0*r)) / (np.dot(r, r))
+        q_dot = (q*(3.0+q*(3.0+q)) / (1.0+np.sqrt((1.0+q)**3)))
+        return q_dot
     
     def rk4_step(self, t, x, u):
         # Runge-Kutta 4 integration step
-        f1 = self.spacecraft_dynamics(x, u)
-        f2 = self.spacecraft_dynamics(x + 0.5*self.dt_sim*f1, u)
-        f3 = self.spacecraft_dynamics(x + 0.5*self.dt_sim*f2, u)
-        f4= self.spacecraft_dynamics(x + self.dt_sim*f3, u)
+        f1 = self.spacecraft_dynamics(t, x, u)
+        f2 = self.spacecraft_dynamics(t + self.dt_sim/2, x + 0.5*self.dt_sim*f1, u)
+        f3 = self.spacecraft_dynamics(t + self.dt_sim/2, x + 0.5*self.dt_sim*f2, u)
+        f4 = self.spacecraft_dynamics(t + self.dt_sim, x + self.dt_sim*f3, u)
 
         return (x + (self.dt_sim/6.0) * (f1 + 2*f2 + 2*f3 + f4))
     
@@ -193,7 +225,7 @@ if __name__ == "__main__":
     #tFinal = spacecraft_obj.get_time_window(num_orbits) / 4
     #spacecraft_obj.dt_sim = 0.05
     #tFinal = 3600.0 / 4
-    tFinal = 1000
+    tFinal = 20000
     t = 0.0
     # Storage for results
     times = []
@@ -201,6 +233,8 @@ if __name__ == "__main__":
     # ICs
     state = spacecraft_obj.x_IC
     u = spacecraft_obj.u_IC
+
+    spacecraft_obj.dt_sim = 0.1
 
     Thruster_Model = Thrusters()
     Wheel_model = ReactionWheels()
@@ -220,7 +254,7 @@ if __name__ == "__main__":
         Tw = -Wheel_model.Ap @ Tcmd # 4 wheels
         # Thruster model
         #u = Thruster_Model.step(Tcmd)
-        print(Tw)
+        #print(Tw)
         u = np.concatenate([Tw, np.array([0, 0, 0])])
         # Step dynamics
         state= spacecraft_obj.rk4_step(t, state, u)
@@ -245,6 +279,20 @@ if __name__ == "__main__":
     plt.ylabel('Angular Rates (deg/s)')
     plt.legend(['X', 'Y', 'Z'])
     plt.grid(True)
+
+    pos = states[:, 11:14]
+    vel = states[:, 14:17]
+
+    plt.figure(figsize=(12, 8))
+    plt.plot(times, pos)
+    plt.ylabel('Pos (m)')
+    plt.legend(['X', 'Y', 'Z'])
+
+    plt.figure(figsize=(12, 8))
+    plt.plot(times, vel)
+    plt.ylabel('Vel (m/s)')
+    plt.legend(['X', 'Y', 'Z'])
+
 
     plt.tight_layout()
 
