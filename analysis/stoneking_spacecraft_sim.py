@@ -30,14 +30,14 @@ class Spacecraft:
         #self.w0 =  np.array([5.0, 0.1, 0.0])  # Initial angular rates [rad/s]
         # Intermediate Axis
         #self.w0 =  np.array([0.1, 5.0, 0.0])*np.pi/180.0  # Initial angular rates [rad/s]
-        self.w0 = np.array([5.0, 5.0, 5.0])*np.pi/180.0
+        self.w0 = np.array([0.0, 0.0, 0.0])*np.pi/180.0
 
         # S/C position and velocity
         self.pos0 = np.array([10, 0, 10])
         self.vel0 = np.array([0, -0.01, 0])
         # Reference Orbit, 700-km circular
-        self.mu = 3.98600e14; # m^3/sec^2
-        self.OrbRad = 6378.145e3+700.0e3;
+        self.mu = 3.98600e14 # m^3/sec^2
+        self.OrbRad = 6378.145e3+700.0e3
         self.muR3 = self.mu/(self.OrbRad**3)
         self.OrbRate = np.sqrt(self.muR3)
 
@@ -46,6 +46,7 @@ class Spacecraft:
 
         self.x_IC = np.concatenate([self.q0.as_quat(), self.w0, self.wheel_model.x_IC, self.pos0, self.vel0]) # S/C Initial State Vector
         self.u_IC = np.array([0, 0, 0, 0, 0, 0, 0]) # Initial controls if needed [rw1 rw2 rw3 thx thy thz]
+
 
 
         # Simulation Parameters (Static)
@@ -98,7 +99,7 @@ class Spacecraft:
         PosR = x[11:14]
         VelR = x[14:17]
 
-        OrbPosN = self.OrbRad * np.array([np.cos(self.OrbRad*t), np.sin(self.OrbRad*t), 0]) # OrbPosN R
+        OrbPosN = self.OrbRad * np.array([np.cos(self.OrbRate*t), np.sin(self.OrbRate*t), 0]) # OrbPosN R
         r = OrbPosN + PosR
 
         fq = self.EnckeFQ(r, PosR)
@@ -120,7 +121,7 @@ class Spacecraft:
     def EnckeFQ(self, r, PosR):
         delta = PosR
         q = np.dot(delta, (delta - 2.0*r)) / (np.dot(r, r))
-        q_dot = (q*(3.0+q*(3.0+q)) / (1.0+np.sqrt((1.0+q)**3)))
+        q_dot = (q*(3.0+q*(3.0+q))/(1.0+np.sqrt((1.0+q)**3)))
         return q_dot
     
     def rk4_step(self, t, x, u):
@@ -225,7 +226,7 @@ if __name__ == "__main__":
     #tFinal = spacecraft_obj.get_time_window(num_orbits) / 4
     #spacecraft_obj.dt_sim = 0.05
     #tFinal = 3600.0 / 4
-    tFinal = 20000
+    tFinal = 20000.0
     t = 0.0
     # Storage for results
     times = []
