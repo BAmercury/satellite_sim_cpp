@@ -44,6 +44,8 @@ class Spacecraft:
         # Wheel class
         self.wheel_model = ReactionWheels()
 
+
+
         self.x_IC = np.concatenate([self.q0.as_quat(), self.w0, self.wheel_model.x_IC, self.pos0, self.vel0]) # S/C Initial State Vector
         self.u_IC = np.array([0, 0, 0, 0, 0, 0, 0]) # Initial controls if needed [rw1 rw2 rw3 thx thy thz]
 
@@ -133,6 +135,29 @@ class Spacecraft:
 
         return (x + (self.dt_sim/6.0) * (f1 + 2*f2 + 2*f3 + f4))
     
+class FlexModel:
+    """
+    Flexible dynamics model with 2 modes
+    """
+    def __init__(self):
+        # Flexible modes
+        # 2 modes
+        self.w_f = [1.2, 5.0]*2*np.pi # Natural Frequency
+        self.d_f = [0.005, 0.0025] # Damping Ratio
+        # one input (force node), 3 RotDOF x 2 modes
+        self.flex_node_in = [[
+            [0.1, -0.6],
+            [-0.2, 0.5],
+            [0.3, 0.4]
+        ]]
+        # One output node (measurement), 3 RotDOF x 2 modes
+        self.flex_node_out = [[
+            [0.25, 0.15],
+            [0.35, 0.5],
+            [-0.15, -0.25]
+        ]]
+        # Initial conditions for flexible dynamics
+        eta0 = np.zeros()
 
 class ReactionWheels:
     """
