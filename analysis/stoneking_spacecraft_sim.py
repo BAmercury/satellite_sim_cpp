@@ -83,6 +83,7 @@ class Spacecraft:
 
         # Process control inputs
         Tw = u[0:4] # Torque commands for reaction wheel
+        T_thr = u[5:7] # Thruster torque commands
 
         # Embedded Reaction wheels
         # Wheel angular acceleration
@@ -93,7 +94,7 @@ class Spacecraft:
         w_w = x[7:11] # Get wheel angular velocity
         H = (self.I_SC @ w)  + self.wheel_model.A @ (self.wheel_model.J_w*w_w)
         # Sum Moments
-        L = -Lw # Reaction torque from wheel
+        L = -(Lw + T_thr)# Reaction torque from wheel
         # Total Angular Acceleration (Body Frame)
         w_dot_b_n_Brf = self.I_SC_inv @ ( (-w_skew @ (H)) + L)
 
@@ -157,7 +158,23 @@ class FlexModel:
             [-0.15, -0.25]
         ]]
         # Initial conditions for flexible dynamics
-        eta0 = np.zeros()
+        eta0 = np.zeros(2)
+        xi0 = np.zeros(2)
+        self.x = np.concatenate([eta0, xi0])
+    def flex_eom(self, u):
+        # Get states:
+        eta = self.x[0:2]
+        xi = self.x[2:4]
+        # Flex Deflection at Output node
+        thetaf = self.flex_node_out @ eta  
+        # Flex deflection at input node
+        Tf = np.transpose(self.flex_node_in) @ u
+        # Flex
+        xi_dot = Tf - 2*self.d_f *self.w_f*xi - self.w_f*self.w_f*eta
+        eta_dot = xi
+
+        x_dot = np.concatenate([eta_dot, xi_dot])
+
 
 class ReactionWheels:
     """
@@ -251,7 +268,7 @@ if __name__ == "__main__":
     #tFinal = spacecraft_obj.get_time_window(num_orbits) / 4
     #spacecraft_obj.dt_sim = 0.05
     #tFinal = 3600.0 / 4
-    tFinal = 20000.0
+    tFinal = 10.0
     t = 0.0
     # Storage for results
     times = []
@@ -275,13 +292,21 @@ if __name__ == "__main__":
         q = state[0:4]
         w = state[4:7]
         # Control law
-        Tcmd = -3.0e-2*w - 1.0e-3*q[0:3]*np.sign(q[3]) # 3 axis torque command reaction wheels
+        #Tcmd = -3.0e-2*w - 1.0e-3*q[0:3]*np.sign(q[3]) # 3 axis torque command reaction wheels
         # Psuedo-inverse control allocation (would need to include thrusters here if using that for attitude control)
-        Tw = -Wheel_model.Ap @ Tcmd # 4 wheels
+        #Tw = -Wheel_model.Ap @ Tcmd # 4 wheels
         # Thruster model
         #u = Thruster_Model.step(Tcmd)
         #print(Tw)
-        u = np.concatenate([Tw, np.array([0, 0, 0])])
+        #u = np.concatenate([Tw, np.array([0, 0, 0])])
+
+        # Impulse torque at t = 1
+        if (t == 1.0):
+            T = np.array([3,2,1]) # Nm
+        else:
+            T = np.array([0, 0, 0])
+        Tw = np.array([0,0,0,0])
+        u = np.concatenate([Tw, T])
         # Step dynamics
         state= spacecraft_obj.rk4_step(t, state, u)
 
