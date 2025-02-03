@@ -179,6 +179,8 @@ class FlexModel:
 
         x_dot = np.concatenate([eta_dot, xi_dot])
         return x_dot
+    def get_thetaf(self, eta):
+        return self.flex_node_out @ eta
     def rk4_step(self, t, x, u):
         # Runge-Kutta 4 integration step
         f1 = self.flex_dynamics(t, x, u)
@@ -378,18 +380,26 @@ if __name__ == "__main__":
     etas = states_flex[:, 0:2]
     xis = states_flex[:, 2:4]
 
-
-    #thetafs =  Flex_Model.flex_node_out @ np.transpose(etas)
+    # Flex states eta can be used to verify the modal frequency and damping
     plt.figure(figsize=(12, 8))
     plt.plot(times, etas)
     plt.legend(['eta_1', 'eta_1'])
     plt.title('Eta')
     plt.grid(True)
 
-    #plt.figure(figsize=(12, 8))
-    #plt.plot(times, np.transpose(thetafs))
-    #plt.legend(['theta_1', 'theta_2', 'theta_3'])
-    #plt.grid(True)   
+    # Deflections theta at the output node are a linear combination of the flex modes
+    thetafs = []
+    # Get Thetaf
+    for row in etas:
+        theta_f = Flex_Model.get_thetaf(row)
+        thetafs.append(theta_f.copy())
+
+    thetafs = np.asarray(thetafs)
+    plt.figure(figsize=(12, 8))
+    plt.plot(times, thetafs)
+    plt.legend(['theta_1', 'theta_2', 'theta_3'])
+    plt.title('Thetaf')
+    plt.grid(True)   
 
     plt.tight_layout()
 
