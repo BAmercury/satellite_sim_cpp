@@ -83,7 +83,7 @@ class Spacecraft:
 
         # Process control inputs
         Tw = u[0:4] # Torque commands for reaction wheel
-        T_thr = u[5:7] # Thruster torque commands
+        T_thr = u[4:7] # Thruster torque commands
 
         # Embedded Reaction wheels
         # Wheel angular acceleration
@@ -94,9 +94,10 @@ class Spacecraft:
         w_w = x[7:11] # Get wheel angular velocity
         H = (self.I_SC @ w)  + self.wheel_model.A @ (self.wheel_model.J_w*w_w)
         # Sum Moments
-        L = -(Lw + T_thr)# Reaction torque from wheel
+        L = -Lw + T_thr# Reaction torque from wheel
         # Total Angular Acceleration (Body Frame)
         w_dot_b_n_Brf = self.I_SC_inv @ ( (-w_skew @ (H)) + L)
+        #w_dot_b_n_Brf = self.I_SC_inv @ ( (-w_skew @ (self.I_SC @ w)) + L)
 
         # Translational Dynamics
         PosR = x[11:14]
@@ -143,28 +144,31 @@ class FlexModel:
     def __init__(self):
         # Flexible modes
         # 2 modes
-        self.w_f = [1.2, 5.0]*2*np.pi # Natural Frequency
-        self.d_f = [0.005, 0.0025] # Damping Ratio
+        self.w_f = np.array([1.2, 5.0])*2*np.pi # Natural Frequency
+        self.d_f = np.array([0.005, 0.0025]) # Damping Ratio
         # one input (force node), 3 RotDOF x 2 modes
-        self.flex_node_in = [[
+        self.flex_node_in = np.array([
             [0.1, -0.6],
             [-0.2, 0.5],
             [0.3, 0.4]
-        ]]
+        ])
         # One output node (measurement), 3 RotDOF x 2 modes
-        self.flex_node_out = [[
+        self.flex_node_out = np.array([
             [0.25, 0.15],
             [0.35, 0.5],
             [-0.15, -0.25]
-        ]]
+        ])
         # Initial conditions for flexible dynamics
         eta0 = np.zeros(2)
         xi0 = np.zeros(2)
-        self.x = np.concatenate([eta0, xi0])
-    def flex_eom(self, u):
+        self.x0 = np.concatenate([eta0, xi0])
+
+        # dt
+        self.dt_sim = 0.01
+    def flex_dynamics(self, t, x, u):
         # Get states:
-        eta = self.x[0:2]
-        xi = self.x[2:4]
+        eta = x[0:2]
+        xi = x[2:4]
         # Flex Deflection at Output node
         thetaf = self.flex_node_out @ eta  
         # Flex deflection at input node
@@ -174,6 +178,15 @@ class FlexModel:
         eta_dot = xi
 
         x_dot = np.concatenate([eta_dot, xi_dot])
+        return x_dot
+    def rk4_step(self, t, x, u):
+        # Runge-Kutta 4 integration step
+        f1 = self.flex_dynamics(t, x, u)
+        f2 = self.flex_dynamics(t + self.dt_sim/2, x + 0.5*self.dt_sim*f1, u)
+        f3 = self.flex_dynamics(t + self.dt_sim/2, x + 0.5*self.dt_sim*f2, u)
+        f4 = self.flex_dynamics(t + self.dt_sim, x + self.dt_sim*f3, u)
+
+        return (x + (self.dt_sim/6.0) * (f1 + 2*f2 + 2*f3 + f4))
 
 
 class ReactionWheels:
@@ -277,15 +290,22 @@ if __name__ == "__main__":
     state = spacecraft_obj.x_IC
     u = spacecraft_obj.u_IC
 
-    spacecraft_obj.dt_sim = 0.1
+    states_flex = []
+    Flex_Model = FlexModel()
+    state_flex = Flex_Model.x0
+
+    spacecraft_obj.dt_sim = 0.01
 
     Thruster_Model = Thrusters()
     Wheel_model = ReactionWheels()
+
+    event_triggered = False
 
     while t < tFinal:
         # Store current state
         times.append(t)
         states.append(state.copy())
+        states_flex.append(state_flex.copy())
 
         #print(t)
         # Controls
@@ -301,14 +321,17 @@ if __name__ == "__main__":
         #u = np.concatenate([Tw, np.array([0, 0, 0])])
 
         # Impulse torque at t = 1
-        if (t == 1.0):
+        if (t >= 1.0 and not event_triggered):
             T = np.array([3,2,1]) # Nm
+            event_triggered = True
         else:
             T = np.array([0, 0, 0])
         Tw = np.array([0,0,0,0])
+        #Tthr = np.array([0,0,0])
         u = np.concatenate([Tw, T])
         # Step dynamics
         state= spacecraft_obj.rk4_step(t, state, u)
+        state_flex = Flex_Model.rk4_step(t, state_flex, T)
 
         t = t + spacecraft_obj.dt_sim
     # Get Angular Rates [pos, vel, attitude quat, angular velocity]
@@ -322,6 +345,7 @@ if __name__ == "__main__":
     plt.plot(times, quats)
     plt.ylabel('Quaternion')
     plt.legend(['q_1', 'q_2', 'q_3', 'q_4'])
+    plt.title('Quaternion qi2b')
     plt.grid(True)
 
 
@@ -329,6 +353,7 @@ if __name__ == "__main__":
     plt.plot(times, np.rad2deg(rates_rad))
     plt.ylabel('Angular Rates (deg/s)')
     plt.legend(['X', 'Y', 'Z'])
+    plt.title('Angular Body Rates')
     plt.grid(True)
 
     pos = states[:, 11:14]
@@ -338,12 +363,33 @@ if __name__ == "__main__":
     plt.plot(times, pos)
     plt.ylabel('Pos (m)')
     plt.legend(['X', 'Y', 'Z'])
+    plt.title('Spacecraft Translational Position')
+    plt.grid(True)
 
     plt.figure(figsize=(12, 8))
     plt.plot(times, vel)
     plt.ylabel('Vel (m/s)')
     plt.legend(['X', 'Y', 'Z'])
+    plt.title('Spacecraft Translational Velocity')
+    plt.grid(True)
 
+    # Plot flex eta (Dispalcement)
+    states_flex = np.asarray(states_flex)
+    etas = states_flex[:, 0:2]
+    xis = states_flex[:, 2:4]
+
+
+    #thetafs =  Flex_Model.flex_node_out @ np.transpose(etas)
+    plt.figure(figsize=(12, 8))
+    plt.plot(times, etas)
+    plt.legend(['eta_1', 'eta_1'])
+    plt.title('Eta')
+    plt.grid(True)
+
+    #plt.figure(figsize=(12, 8))
+    #plt.plot(times, np.transpose(thetafs))
+    #plt.legend(['theta_1', 'theta_2', 'theta_3'])
+    #plt.grid(True)   
 
     plt.tight_layout()
 
