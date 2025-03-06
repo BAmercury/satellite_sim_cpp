@@ -265,7 +265,7 @@ if __name__ == "__main__":
 
     #ts = 10
     Kp = np.array([1500.0, 1800.0, 1800.0])
-    Ki = np.array([800.0, 800.0, 800.0])
+    Ki = np.array([800.0, 1, 800.0])
     integral_error = np.zeros(3)
     # ICs
     state = spacecraft_obj.x_IC
