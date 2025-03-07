@@ -34,8 +34,8 @@ class Spacecraft:
         self.w0 = np.array([5.0, 5.0, 5.0])*np.pi/180.0
 
         # S/C position and velocity
-        self.pos0 = np.array([1, 0, 0])
-        self.vel0 = np.array([0, -0.001, 0])
+        self.pos0 = np.array([1, 0, 0]) # 10m offset in X and Z
+        self.vel0 = np.array([0, -0.001, 0]) # -0.01 m/s in Y direction
         # Reference Orbit, 700-km circular
         self.mu = 3.98600e14 # m^3/sec^2
         self.OrbRad = 6378.145e3+700.0e3
