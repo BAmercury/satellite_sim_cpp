@@ -1,0 +1,279 @@
+function [A, B, C, D, state_names, input_names, system_info] = build_multi_tank_slosh_state_space_enhanced(spacecraft_params, tank_params)
+% BUILD_MULTI_TANK_SLOSH_STATE_SPACE_ENHANCED
+% Enhanced version for off-centerline tank configurations
+%
+% Key improvements:
+% 1. Full 3D coupling (not just yH-based)
+% 2. Enhanced cross-axis coupling terms
+% 3. Better handling of off-centerline configurations
+% 4. More complete angular acceleration coupling
+%
+% Inputs:
+%   spacecraft_params: Structure with fields:
+%     - I: 3x3 inertia matrix [kg*m^2]
+%     - M0: Total spacecraft mass [kg]
+%     - g: Effective acceleration (thrust/mass) [m/s^2]
+%
+%   tank_params: Structure array (one element per tank) with fields:
+%     - m: Slosh mass [kg]
+%     - l: Pendulum length [m]
+%     - xH, yH, zH: Hinge location w.r.t. spacecraft CG [m]
+%     - zeta: Viscous damping factor [dimensionless]
+%     - name: String identifier for the tank (optional)
+
+% Extract spacecraft parameters
+I_matrix = spacecraft_params.I;  % Full 3x3 inertia matrix
+M0 = spacecraft_params.M0;
+g = spacecraft_params.g;
+
+% Calculate inverse inertia matrix (CORRECT approach for non-diagonal inertia)
+I_inv = inv(I_matrix);
+inv_Ixx = I_inv(1,1);  % 1/I_effective_x (accounts for cross-coupling)
+inv_Iyy = I_inv(2,2);  % 1/I_effective_y
+inv_Izz = I_inv(3,3);  % 1/I_effective_z
+
+% Number of tanks
+n_tanks = length(tank_params);
+
+% Pre-calculate tank properties with ENHANCED coupling
+tank_info = struct();
+for i = 1:n_tanks
+% Extract tank parameters
+tank_info(i).m = tank_params(i).m;
+tank_info(i).l = tank_params(i).l;
+tank_info(i).xH = tank_params(i).xH;
+tank_info(i).yH = tank_params(i).yH;
+tank_info(i).zH = tank_params(i).zH;
+tank_info(i).zeta = tank_params(i).zeta;
+
+```
+% Calculate derived parameters for each tank
+tank_info(i).omega_sl = sqrt(g/tank_info(i).l * (1 + tank_info(i).m/M0));
+
+% ENHANCED: Full 3D acceleration sensitivities
+% Each tank position component affects multiple axes
+
+% X-axis (roll) sensitivities - affected by Y and Z positions
+tank_info(i).mu_P_accn_x_from_fy = tank_info(i).m * tank_info(i).zH * g * inv_Ixx;  % Fy creates roll via Z-offset
+tank_info(i).mu_P_accn_x_from_fz = tank_info(i).m * tank_info(i).yH * g * inv_Ixx;  % Fz creates roll via Y-offset
+
+% Y-axis (pitch) sensitivities - affected by X and Z positions  
+tank_info(i).mu_P_accn_y_from_fx = tank_info(i).m * tank_info(i).zH * g * inv_Iyy;  % Fx creates pitch via Z-offset
+tank_info(i).mu_P_accn_y_from_fz = tank_info(i).m * tank_info(i).xH * g * inv_Iyy;  % Fz creates pitch via X-offset
+
+% Z-axis (yaw) sensitivities - affected by X and Y positions
+tank_info(i).mu_P_accn_z_from_fx = tank_info(i).m * tank_info(i).yH * g * inv_Izz;  % Fx creates yaw via Y-offset
+tank_info(i).mu_P_accn_z_from_fy = tank_info(i).m * tank_info(i).xH * g * inv_Izz;  % Fy creates yaw via X-offset
+
+% ENHANCED: Angular acceleration coupling (torque → slosh)
+% Distance from CG for centrifugal acceleration effects
+tank_info(i).r_total = sqrt(tank_info(i).xH^2 + tank_info(i).yH^2 + tank_info(i).zH^2);
+
+% Angular acceleration coupling coefficients
+tank_info(i).alpha_coupling_x = tank_info(i).yH;  % Roll angular accel affects tank via Y-offset
+tank_info(i).alpha_coupling_y = tank_info(i).xH;  % Pitch angular accel affects tank via X-offset  
+tank_info(i).alpha_coupling_z = tank_info(i).xH;  % Yaw angular accel affects tank via X-offset (if rotating about Z)
+
+% Rate sensitivities (for analysis)
+tank_info(i).mu_P_rate_x = tank_info(i).mu_P_accn_x_from_fz / tank_info(i).omega_sl;
+tank_info(i).mu_P_rate_y = tank_info(i).mu_P_accn_y_from_fz / tank_info(i).omega_sl;
+tank_info(i).mu_P_rate_z = tank_info(i).mu_P_accn_z_from_fx / tank_info(i).omega_sl;
+
+% Tank name for identification
+if isfield(tank_params(i), 'name')
+    tank_info(i).name = tank_params(i).name;
+else
+    tank_info(i).name = sprintf('Tank%d', i);
+end
+```
+
+end
+
+% State vector dimension: 6 rigid body + 4*n_tanks pendulum states
+N = 6 + 4*n_tanks;
+
+% Initialize matrices
+A = zeros(N, N);
+B = zeros(N, 6);
+C = eye(N);  % Full state output
+D = zeros(N, 6);
+
+%% Build A matrix
+
+% Attitude kinematics: [psi; phi; theta] = [wx; wy; wz]
+A(1:3, 4:6) = eye(3);
+
+% ENHANCED: Slosh coupling to spacecraft dynamics (all axes)
+for i = 1:n_tanks
+% State indices for tank i
+psi_p_idx = 6 + (i-1)*4 + 1;    % psi_p for tank i (roll-yaw plane pendulum)
+theta_p_idx = 6 + (i-1)*4 + 2;  % theta_p for tank i (roll-pitch plane pendulum)
+
+```
+% Enhanced coupling: pendulum motion affects ALL body rates
+% Roll rate (wx) coupling
+A(4, psi_p_idx) = A(4, psi_p_idx) - tank_info(i).mu_P_accn_x_from_fz;    % psi_p affects roll
+A(4, theta_p_idx) = A(4, theta_p_idx) - tank_info(i).mu_P_accn_x_from_fy; % theta_p affects roll
+
+% Pitch rate (wy) coupling  
+A(5, psi_p_idx) = A(5, psi_p_idx) - tank_info(i).mu_P_accn_y_from_fx;    % psi_p affects pitch
+A(5, theta_p_idx) = A(5, theta_p_idx) - tank_info(i).mu_P_accn_y_from_fz; % theta_p affects pitch
+
+% Yaw rate (wz) coupling
+A(6, psi_p_idx) = A(6, psi_p_idx) - tank_info(i).mu_P_accn_z_from_fx;    % psi_p affects yaw
+A(6, theta_p_idx) = A(6, theta_p_idx) - tank_info(i).mu_P_accn_z_from_fy; % theta_p affects yaw
+```
+
+end
+
+% Pendulum dynamics for each tank (same as before)
+for i = 1:n_tanks
+% State indices for tank i
+base_idx = 6 + (i-1)*4;
+psi_p_idx = base_idx + 1;       % psi_p
+theta_p_idx = base_idx + 2;     % theta_p  
+psi_p_dot_idx = base_idx + 3;   % psi_p_dot
+theta_p_dot_idx = base_idx + 4; % theta_p_dot
+
+```
+% Pendulum kinematics: [psi_p; theta_p] = [psi_p_dot; theta_p_dot]
+A(psi_p_idx, psi_p_dot_idx) = 1;
+A(theta_p_idx, theta_p_dot_idx) = 1;
+
+% Pendulum damping
+A(psi_p_dot_idx, psi_p_dot_idx) = -2*tank_info(i).zeta*tank_info(i).omega_sl;
+A(theta_p_dot_idx, theta_p_dot_idx) = -2*tank_info(i).zeta*tank_info(i).omega_sl;
+
+% Pendulum restoring forces with coupling from all tanks
+% For psi_p equation (yaw-roll plane) - diagonal term
+A(psi_p_dot_idx, psi_p_idx) = -(1/tank_info(i).l) * ...
+    ((1 + tank_info(i).m/M0)*g + (tank_info(i).yH - tank_info(i).l)*tank_info(i).mu_P_accn_z_from_fx);
+
+% For theta_p equation (roll-pitch plane) - diagonal term  
+A(theta_p_dot_idx, theta_p_idx) = -(1/tank_info(i).l) * ...
+    ((1 + tank_info(i).m/M0)*g + (tank_info(i).yH - tank_info(i).l)*tank_info(i).mu_P_accn_y_from_fx);
+
+% Cross-coupling terms with other tanks
+for j = 1:n_tanks
+    if i ~= j
+        other_psi_p_idx = 6 + (j-1)*4 + 1;
+        other_theta_p_idx = 6 + (j-1)*4 + 2;
+        
+        % Cross-coupling in psi equation
+        A(psi_p_dot_idx, other_psi_p_idx) = -(1/tank_info(i).l) * ...
+            (tank_info(j).m/M0 * g + (tank_info(i).yH - tank_info(i).l)*tank_info(j).mu_P_accn_z_from_fx);
+        
+        % Cross-coupling in theta equation  
+        A(theta_p_dot_idx, other_theta_p_idx) = -(1/tank_info(i).l) * ...
+            (tank_info(j).m/M0 * g + (tank_info(i).yH - tank_info(i).l)*tank_info(j).mu_P_accn_y_from_fx);
+    end
+end
+```
+
+end
+
+%% Build B matrix
+
+% Control torques on spacecraft attitude rates (using inverse inertia elements)
+B(4, 1) = inv_Ixx;  % Tcx affects wx
+B(5, 2) = inv_Iyy;  % Tcy affects wy  
+B(6, 3) = inv_Izz;  % Tcz affects wz
+
+% ENHANCED: Thruster forces affecting pendulum dynamics for each tank
+for i = 1:n_tanks
+base_idx = 6 + (i-1)*4;
+psi_p_dot_idx = base_idx + 3;   % psi_p_dot
+theta_p_dot_idx = base_idx + 4; % theta_p_dot
+
+```
+% ENHANCED: All force components affect both pendulum directions
+
+% psi_p equation effects (yaw-roll plane pendulum)
+B(psi_p_dot_idx, 4) = -1/(M0*tank_info(i).l);  % fx_thr direct effect
+B(psi_p_dot_idx, 5) = -tank_info(i).zH/(tank_info(i).l * (1/inv_Iyy));  % fy_thr via Z-offset
+B(psi_p_dot_idx, 6) = (tank_info(i).yH - tank_info(i).l)/(tank_info(i).l * (1/inv_Izz));  % fz_thr via Y-offset
+
+% theta_p equation effects (roll-pitch plane pendulum)  
+B(theta_p_dot_idx, 4) = (tank_info(i).yH - tank_info(i).l)/(tank_info(i).l * (1/inv_Ixx));  % fx_thr via Y-offset
+B(theta_p_dot_idx, 5) = -tank_info(i).xH/(tank_info(i).l * (1/inv_Iyy));  % fy_thr via X-offset
+B(theta_p_dot_idx, 6) = 1/(M0*tank_info(i).l);  % fz_thr direct effect
+
+% ENHANCED: Add angular acceleration coupling from control torques
+% Control torque → angular acceleration → centrifugal acceleration → slosh
+
+% Roll torque (Tcx) creates angular acceleration that affects slosh
+if abs(tank_info(i).alpha_coupling_x) > 1e-6
+    B(psi_p_dot_idx, 1) = B(psi_p_dot_idx, 1) + ...
+        tank_info(i).alpha_coupling_x / (tank_info(i).l * (1/inv_Ixx));
+    B(theta_p_dot_idx, 1) = B(theta_p_dot_idx, 1) + ...
+        tank_info(i).alpha_coupling_x / (tank_info(i).l * (1/inv_Ixx));
+end
+
+% Pitch torque (Tcy) creates angular acceleration that affects slosh
+if abs(tank_info(i).alpha_coupling_y) > 1e-6
+    B(psi_p_dot_idx, 2) = B(psi_p_dot_idx, 2) + ...
+        tank_info(i).alpha_coupling_y / (tank_info(i).l * (1/inv_Iyy));
+    B(theta_p_dot_idx, 2) = B(theta_p_dot_idx, 2) + ...
+        tank_info(i).alpha_coupling_y / (tank_info(i).l * (1/inv_Iyy));
+end
+
+% Yaw torque (Tcz) creates angular acceleration that affects slosh
+if abs(tank_info(i).alpha_coupling_z) > 1e-6
+    B(psi_p_dot_idx, 3) = B(psi_p_dot_idx, 3) + ...
+        tank_info(i).alpha_coupling_z / (tank_info(i).l * (1/inv_Izz));
+    B(theta_p_dot_idx, 3) = B(theta_p_dot_idx, 3) + ...
+        tank_info(i).alpha_coupling_z / (tank_info(i).l * (1/inv_Izz));
+end
+```
+
+end
+
+%% Generate state and input names
+state_names = {‘psi’, ‘phi’, ‘theta’, ‘wx’, ‘wy’, ‘wz’};
+
+for i = 1:n_tanks
+tank_name = tank_info(i).name;
+state_names{end+1} = sprintf(‘psi_p_%s’, tank_name);
+state_names{end+1} = sprintf(‘theta_p_%s’, tank_name);
+state_names{end+1} = sprintf(‘psi_p_dot_%s’, tank_name);
+state_names{end+1} = sprintf(‘theta_p_dot_%s’, tank_name);
+end
+
+input_names = {‘Tcx’, ‘Tcy’, ‘Tcz’, ‘fx_thr’, ‘fy_thr’, ‘fz_thr’};
+
+%% Package enhanced system information
+system_info.n_tanks = n_tanks;
+system_info.tank_info = tank_info;
+system_info.n_states = N;
+system_info.inertia_matrix = I_matrix;
+system_info.inverse_inertia = I_inv;
+system_info.spacecraft_mass = M0;
+system_info.total_slosh_mass = sum([tank_info.m]);
+
+% Enhanced analysis
+system_info.is_diagonal_inertia = all(all(abs(I_matrix - diag(diag(I_matrix))) < 1e-10));
+system_info.max_tank_offset = max([tank_info.r_total]);
+system_info.coupling_strength = struct();
+
+% Calculate overall coupling strengths
+system_info.coupling_strength.max_rate_coupling = max([
+max([tank_info.mu_P_rate_x]),
+max([tank_info.mu_P_rate_y]),
+max([tank_info.mu_P_rate_z])]);
+
+system_info.coupling_strength.cross_axis_significant = …
+system_info.coupling_strength.max_rate_coupling > 0.01;
+
+if ~system_info.is_diagonal_inertia
+fprintf(‘Note: Non-diagonal inertia matrix detected. Using proper inverse inertia approach.\n’);
+end
+
+if system_info.max_tank_offset > 1.0
+fprintf(‘Note: Large tank offset detected (%.2f m). Enhanced coupling model active.\n’, system_info.max_tank_offset);
+end
+
+if system_info.coupling_strength.cross_axis_significant
+fprintf(‘Note: Significant cross-axis coupling detected. Consider MIMO control design.\n’);
+end
+
+end
