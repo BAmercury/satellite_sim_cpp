@@ -1,0 +1,400 @@
+function [siso_systems, analysis_results] = create_siso_slosh_systems(A, B, C, D, state_names, input_names, options)
+% CREATE_SISO_SLOSH_SYSTEMS Extract SISO transfer functions from MIMO slosh system
+%
+% Inputs:
+%   A, B, C, D: State space matrices from multi-tank system
+%   state_names: Cell array of state names
+%   input_names: Cell array of input names
+%   options: Structure with analysis options (optional)
+%     - freq_range: [w_min w_max] frequency range for analysis [rad/s]
+%     - plot_responses: true/false to generate plots
+%     - include_margins: true/false to calculate stability margins
+%
+% Outputs:
+%   siso_systems: Structure containing all relevant SISO transfer functions
+%   analysis_results: Structure with frequency response analysis
+
+if nargin < 7
+options = struct();
+end
+
+% Default options
+if ~isfield(options, ‘freq_range’)
+options.freq_range = [0.01 100];  % rad/s
+end
+if ~isfield(options, ‘plot_responses’)
+options.plot_responses = true;
+end
+if ~isfield(options, ‘include_margins’)
+options.include_margins = true;
+end
+
+% Create full MIMO system
+sys_mimo = ss(A, B, C, D);
+sys_mimo.StateName = state_names;
+sys_mimo.InputName = input_names;
+sys_mimo.OutputName = state_names;
+
+% Find state indices
+wx_idx = find(strcmp(state_names, ‘wx’));
+wy_idx = find(strcmp(state_names, ‘wy’));
+wz_idx = find(strcmp(state_names, ‘wz’));
+
+% Find input indices
+Tcx_idx = find(strcmp(input_names, ‘Tcx’));
+Tcy_idx = find(strcmp(input_names, ‘Tcy’));
+Tcz_idx = find(strcmp(input_names, ‘Tcz’));
+fx_idx = find(strcmp(input_names, ‘fx_thr’));
+fy_idx = find(strcmp(input_names, ‘fy_thr’));
+fz_idx = find(strcmp(input_names, ‘fz_thr’));
+
+%% Extract Primary SISO Systems (Control Torques to Angular Rates)
+
+% Roll control: Tcx -> wx (roll torque to roll rate)
+siso_systems.roll_control = sys_mimo(wx_idx, Tcx_idx);
+siso_systems.roll_control.Name = ‘Roll Control: Tcx -> wx’;
+
+% Pitch control: Tcy -> wy (pitch torque to pitch rate)  
+siso_systems.pitch_control = sys_mimo(wy_idx, Tcy_idx);
+siso_systems.pitch_control.Name = ‘Pitch Control: Tcy -> wy’;
+
+% Yaw control: Tcz -> wz (yaw torque to yaw rate)
+siso_systems.yaw_control = sys_mimo(wz_idx, Tcz_idx);
+siso_systems.yaw_control.Name = ‘Yaw Control: Tcz -> wz’;
+
+%% Extract Thruster Force SISO Systems (for RCS analysis)
+
+% Lateral thruster effects
+siso_systems.lateral_x = sys_mimo(wx_idx, fx_idx);
+siso_systems.lateral_x.Name = ‘Lateral X: fx_thr -> wx’;
+
+siso_systems.lateral_y = sys_mimo(wy_idx, fy_idx);
+siso_systems.lateral_y.Name = ‘Lateral Y: fy_thr -> wy’;
+
+siso_systems.lateral_z = sys_mimo(wz_idx, fz_idx);
+siso_systems.lateral_z.Name = ‘Lateral Z: fz_thr -> wz’;
+
+%% Cross-coupling SISO Systems (off-diagonal terms)
+
+% Cross-coupling from control torques
+siso_systems.cross_Tcx_wy = sys_mimo(wy_idx, Tcx_idx);
+siso_systems.cross_Tcx_wy.Name = ‘Cross-coupling: Tcx -> wy’;
+
+siso_systems.cross_Tcx_wz = sys_mimo(wz_idx, Tcx_idx);
+siso_systems.cross_Tcx_wz.Name = ‘Cross-coupling: Tcx -> wz’;
+
+siso_systems.cross_Tcy_wx = sys_mimo(wx_idx, Tcy_idx);
+siso_systems.cross_Tcy_wx.Name = ‘Cross-coupling: Tcy -> wx’;
+
+siso_systems.cross_Tcy_wz = sys_mimo(wz_idx, Tcy_idx);
+siso_systems.cross_Tcy_wz.Name = ‘Cross-coupling: Tcy -> wz’;
+
+% Cross-coupling from thruster forces
+siso_systems.cross_fx_wy = sys_mimo(wy_idx, fx_idx);
+siso_systems.cross_fx_wy.Name = ‘Cross-coupling: fx_thr -> wy’;
+
+siso_systems.cross_fy_wz = sys_mimo(wz_idx, fy_idx);
+siso_systems.cross_fy_wz.Name = ‘Cross-coupling: fy_thr -> wz’;
+
+%% Frequency Response Analysis
+
+w = logspace(log10(options.freq_range(1)), log10(options.freq_range(2)), 1000);
+
+% Analyze primary control loops
+primary_systems = {siso_systems.roll_control, siso_systems.pitch_control, siso_systems.yaw_control};
+primary_names = {‘Roll’, ‘Pitch’, ‘Yaw’};
+
+analysis_results = struct();
+
+for i = 1:length(primary_systems)
+sys = primary_systems{i};
+name = primary_names{i};
+
+```
+% Frequency response
+[mag, phase, w_out] = bode(sys, w);
+mag = squeeze(mag);
+phase = squeeze(phase);
+
+% Store results
+analysis_results.(lower(name)).frequency = w_out;
+analysis_results.(lower(name)).magnitude_dB = 20*log10(mag);
+analysis_results.(lower(name)).phase_deg = phase;
+
+% Find resonant peaks (slosh modes)
+[peaks, peak_locs] = findpeaks(20*log10(mag), 'MinPeakHeight', 1); % Peaks > 1 dB
+if ~isempty(peaks)
+    analysis_results.(lower(name)).slosh_peaks.frequencies_Hz = w_out(peak_locs)/(2*pi);
+    analysis_results.(lower(name)).slosh_peaks.magnitudes_dB = peaks;
+    fprintf('%s axis has %d slosh resonances:\n', name, length(peaks));
+    for j = 1:length(peaks)
+        fprintf('  %.2f Hz: %.1f dB\n', w_out(peak_locs(j))/(2*pi), peaks(j));
+    end
+else
+    analysis_results.(lower(name)).slosh_peaks = [];
+    fprintf('%s axis: No significant slosh resonances detected\n', name);
+end
+
+% Stability margins (if requested and system is feedback-ready)
+if options.include_margins
+    try
+        [Gm, Pm, Wcg, Wcp] = margin(sys);
+        if ~isempty(Gm) && ~isempty(Pm)
+            analysis_results.(lower(name)).gain_margin_dB = 20*log10(Gm);
+            analysis_results.(lower(name)).phase_margin_deg = Pm;
+            analysis_results.(lower(name)).crossover_freq_Hz = Wcp/(2*pi);
+            analysis_results.(lower(name)).gain_margin_freq_Hz = Wcg/(2*pi);
+        end
+    catch
+        fprintf('Could not compute margins for %s axis\n', name);
+    end
+end
+```
+
+end
+
+%% Generate Plots
+
+if options.plot_responses
+% Primary control loops Bode plots
+figure(‘Name’, ‘Primary Control Loops’, ‘Position’, [100 100 1200 800]);
+
+```
+for i = 1:3
+    subplot(2,3,i);
+    bode(primary_systems{i}, w);
+    title(sprintf('%s Control Loop', primary_names{i}));
+    grid on;
+    
+    % Highlight slosh peaks
+    if ~isempty(analysis_results.(lower(primary_names{i})).slosh_peaks)
+        hold on;
+        peaks = analysis_results.(lower(primary_names{i})).slosh_peaks;
+        for j = 1:length(peaks.frequencies_Hz)
+            xline(peaks.frequencies_Hz(j)*2*pi, 'r--', 'LineWidth', 1.5);
+        end
+    end
+end
+
+% Comparison plot
+subplot(2,3,[4 5 6]);
+bode(primary_systems{1}, primary_systems{2}, primary_systems{3}, w);
+legend(primary_names, 'Location', 'best');
+title('Control Loops Comparison');
+grid on;
+
+% Cross-coupling analysis plot
+figure('Name', 'Cross-Coupling Analysis', 'Position', [150 150 1200 600]);
+
+cross_systems = {siso_systems.cross_Tcx_wy, siso_systems.cross_Tcx_wz, ...
+                 siso_systems.cross_Tcy_wx, siso_systems.cross_Tcy_wz};
+cross_names = {'Tcx->wy', 'Tcx->wz', 'Tcy->wx', 'Tcy->wz'};
+
+for i = 1:4
+    subplot(2,2,i);
+    bode(cross_systems{i}, w);
+    title(cross_names{i});
+    grid on;
+end
+
+% Thruster force effects
+figure('Name', 'Thruster Force Effects', 'Position', [200 200 1200 600]);
+
+thruster_systems = {siso_systems.lateral_x, siso_systems.lateral_y, siso_systems.lateral_z};
+thruster_names = {'fx->wx', 'fy->wy', 'fz->wz'};
+
+for i = 1:3
+    subplot(2,3,i);
+    bode(thruster_systems{i}, w);
+    title(thruster_names{i});
+    grid on;
+    
+    subplot(2,3,i+3);
+    step(thruster_systems{i}, 10);
+    title(sprintf('Step Response: %s', thruster_names{i}));
+    grid on;
+end
+```
+
+end
+
+end
+
+%% Specialized SISO analysis functions
+
+function analyze_slosh_notching(siso_sys, target_freq_hz, notch_depth_db)
+% ANALYZE_SLOSH_NOTCHING Design notch filters for slosh suppression
+%
+% Inputs:
+%   siso_sys: SISO system to analyze
+%   target_freq_hz: Slosh frequency to notch [Hz]
+%   notch_depth_db: Desired attenuation [dB]
+
+if nargin < 3
+notch_depth_db = 20; % Default 20 dB attenuation
+end
+
+w_notch = 2*pi*target_freq_hz;
+zeta_notch = 0.1; % Notch damping
+
+% Design notch filter
+% H_notch(s) = (s^2 + 2*zeta_n*w_n*s + w_n^2) / (s^2 + 2*zeta_d*w_n*s + w_n^2)
+zeta_num = 0.01;  % Numerator damping (small for deep notch)
+zeta_den = sqrt(10^(-notch_depth_db/20)) * zeta_notch;  % Denominator damping
+
+num = [1, 2*zeta_num*w_notch, w_notch^2];
+den = [1, 2*zeta_den*w_notch, w_notch^2];
+
+notch_filter = tf(num, den);
+notched_system = series(notch_filter, siso_sys);
+
+% Compare responses
+figure(‘Name’, sprintf(‘Notch Filter Design for %.2f Hz’, target_freq_hz));
+subplot(2,1,1);
+bode(siso_sys, notched_system);
+legend(‘Original’, ‘With Notch’, ‘Location’, ‘best’);
+title(‘Frequency Response Comparison’);
+grid on;
+
+subplot(2,1,2);
+step(siso_sys, notched_system, 20);
+legend(‘Original’, ‘With Notch’, ‘Location’, ‘best’);
+title(‘Step Response Comparison’);
+grid on;
+
+fprintf(‘Notch filter designed for %.2f Hz with %.1f dB attenuation\n’, target_freq_hz, notch_depth_db);
+end
+
+function [K_optimal, margins] = design_rate_feedback(siso_sys, target_bandwidth_hz, target_phase_margin)
+% DESIGN_RATE_FEEDBACK Design simple rate feedback controller
+%
+% Inputs:
+%   siso_sys: Open-loop SISO system (torque/force to rate)
+%   target_bandwidth_hz: Desired closed-loop bandwidth [Hz]
+%   target_phase_margin: Desired phase margin [degrees]
+
+if nargin < 3
+target_phase_margin = 45; % Default 45 degrees
+end
+
+target_bandwidth = 2*pi*target_bandwidth_hz;
+
+% Simple proportional controller in rate loop
+% Closed loop: G_cl = K*G / (1 + K*G)
+% where G is the open-loop system
+
+% Find gain for desired crossover frequency
+[mag_at_target, ~] = bode(siso_sys, target_bandwidth);
+K_crossover = 1/mag_at_target;
+
+% Check phase margin at this gain
+loop_sys = series(K_crossover, siso_sys);
+[Gm, Pm, Wcg, Wcp] = margin(loop_sys);
+
+fprintf(‘Initial design:\n’);
+fprintf(’  Gain K = %.2e\n’, K_crossover);
+fprintf(’  Phase margin = %.1f deg\n’, Pm);
+fprintf(’  Crossover frequency = %.2f Hz\n’, Wcp/(2*pi));
+
+% Adjust gain if phase margin is not adequate
+if Pm < target_phase_margin
+% Reduce gain to improve phase margin
+K_optimal = K_crossover * 0.7;  % Heuristic reduction
+fprintf(‘Reducing gain for better phase margin\n’);
+else
+K_optimal = K_crossover;
+end
+
+% Final system analysis
+loop_optimal = series(K_optimal, siso_sys);
+closed_loop = feedback(loop_optimal, 1);
+
+[Gm_final, Pm_final, Wcg_final, Wcp_final] = margin(loop_optimal);
+
+margins.gain_margin_dB = 20*log10(Gm_final);
+margins.phase_margin_deg = Pm_final;
+margins.crossover_freq_hz = Wcp_final/(2*pi);
+
+fprintf(’\nFinal design:\n’);
+fprintf(’  Optimal gain K = %.2e\n’, K_optimal);
+fprintf(’  Phase margin = %.1f deg\n’, Pm_final);
+fprintf(’  Gain margin = %.1f dB\n’, 20*log10(Gm_final));
+fprintf(’  Crossover frequency = %.2f Hz\n’, Wcp_final/(2*pi));
+
+% Plot results
+figure(‘Name’, ‘Rate Feedback Controller Design’);
+subplot(2,2,1);
+margin(loop_optimal);
+title(‘Open-Loop Margins’);
+
+subplot(2,2,2);
+bode(closed_loop);
+title(‘Closed-Loop Response’);
+grid on;
+
+subplot(2,2,3);
+step(closed_loop, 5);
+title(‘Closed-Loop Step Response’);
+grid on;
+
+subplot(2,2,4);
+nyquist(loop_optimal);
+title(‘Nyquist Plot’);
+grid on;
+end
+
+%% Example usage
+function example_siso_analysis()
+% This would typically be called after building your multi-tank system
+
+```
+fprintf('=== SISO Analysis Example ===\n');
+fprintf('First run the multi-tank example to get A, B, C, D matrices\n');
+fprintf('Then call this function with your system matrices\n');
+
+% Placeholder - you would use your actual system matrices here
+if exist('A_matrix', 'var') && exist('B_matrix', 'var')
+    % Use existing matrices from workspace
+    fprintf('Using existing system matrices from workspace\n');
+    
+    % Get state and input names (you'd need to define these based on your system)
+    state_names = evalin('base', 'state_names');
+    input_names = evalin('base', 'input_names');
+    A = evalin('base', 'A_matrix');
+    B = evalin('base', 'B_matrix');
+    C = eye(size(A,1));
+    D = zeros(size(A,1), size(B,2));
+    
+    % Create SISO systems
+    options.freq_range = [0.01 50];
+    options.plot_responses = true;
+    options.include_margins = true;
+    
+    [siso_systems, analysis_results] = create_siso_slosh_systems(A, B, C, D, state_names, input_names, options);
+    
+    % Save to workspace
+    assignin('base', 'siso_systems', siso_systems);
+    assignin('base', 'siso_analysis', analysis_results);
+    
+    fprintf('SISO systems created and saved to workspace\n');
+    
+    % Example: Design controller for roll axis if slosh peaks exist
+    if ~isempty(analysis_results.roll.slosh_peaks)
+        fprintf('\nDesigning notch filter for roll axis slosh...\n');
+        peak_freq = analysis_results.roll.slosh_peaks.frequencies_Hz(1);
+        analyze_slosh_notching(siso_systems.roll_control, peak_freq, 25);
+    end
+    
+else
+    fprintf('Please run example_multi_tank_usage() first to create system matrices\n');
+end
+```
+
+end
+
+% Run example if matrices don’t exist
+if ~exist(‘A_matrix’, ‘var’)
+fprintf(‘No system matrices found. Run the multi-tank example first.\n’);
+else
+example_siso_analysis();
+end
