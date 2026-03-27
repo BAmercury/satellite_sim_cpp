@@ -151,21 +151,21 @@ legend({'', '', '', 'ECI Frame', '', '', 'Body', 'CG', 'Thrusters', ...
 %% Animation Function (optional)
 % Uncomment the following section to animate rotation
 
-% % Create time vector
+% Create time vector
 % t = linspace(0, 2*pi, 100);
 % 
 % for i = 1:length(t)
-%     % Update quaternion (example: rotation about z-axis)
+%     Update quaternion (example: rotation about z-axis)
 %     angle = t(i);
 %     q_eciTobody = [cos(angle/2); 0; 0; sin(angle/2)];
-%     
-%     % Clear current plot
+% 
+%     Clear current plot
 %     cla;
-%     
-%     % Replot everything with new orientation
-%     % [Insert all plotting code here]
-%     
-%     % Update display
+% 
+%     Replot everything with new orientation
+%     [Insert all plotting code here]
+% 
+%     Update display
 %     drawnow;
 %     pause(0.05);
 % end
